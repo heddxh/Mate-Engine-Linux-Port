@@ -9,7 +9,7 @@ public static class CliBuilder
         var options = new BuildPlayerOptions
         {
             scenes = new[] { "Assets/MATE ENGINE - Scenes/Mate Engine Main.unity"},
-            locationPathName = "~/Desktop/MateEngineX/MateEngineX.x86_64",
+            locationPathName = "build/MateEngineX.x86_64",
             target = BuildTarget.StandaloneLinux64,
             options = BuildOptions.CompressWithLz4HC
         };
