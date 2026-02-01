@@ -6,6 +6,7 @@ public class IpcController : MonoBehaviour
 
     [Header("References")]
     [SerializeField] private AvatarRandomMessages avatarMessages;
+    [SerializeField] private Animator avatarAnimator;
 
     private IpcMessageServer server;
     private const int MaxMessagesPerFrame = 10;
@@ -61,31 +62,17 @@ public class IpcController : MonoBehaviour
 
         try
         {
-            if (command.Request.type == "show_message")
+            switch (command.Request.type)
             {
-                var target = GetActiveAvatarMessages();
-                if (target == null)
-                {
-                    response = IpcProtocol.CreateError(command.Request.requestId, "AvatarRandomMessages not found");
-                    command.Callback?.Invoke(response);
-                    return;
-                }
-
-                var msg = new AvatarMessage
-                {
-                    text = command.Request.payload.text,
-                    state = command.Request.payload.state ?? "Idle",
-                    locKey = "",
-                    onActive = false,
-                    isHusbando = false
-                };
-
-                target.ShowExternalMessage(msg, command.Request.payload.forceShow);
-                response = IpcProtocol.CreateSuccess(command.Request.requestId);
-            }
-            else
-            {
-                response = IpcProtocol.CreateError(command.Request.requestId, "Unknown command type");
+                case "show_message":
+                    response = HandleShowMessage(command.Request);
+                    break;
+                case "set_animator":
+                    response = HandleSetAnimator(command.Request);
+                    break;
+                default:
+                    response = IpcProtocol.CreateError(command.Request.requestId, "Unknown command type");
+                    break;
             }
         }
         catch (System.Exception e)
@@ -95,6 +82,86 @@ public class IpcController : MonoBehaviour
         }
 
         command.Callback?.Invoke(response);
+    }
+
+    private IpcResponse HandleShowMessage(IpcRequest request)
+    {
+        var target = GetActiveAvatarMessages();
+        if (target == null)
+            return IpcProtocol.CreateError(request.requestId, "AvatarRandomMessages not found");
+
+        // Apply optional animator params first
+        if (request.payload.animatorParams != null && request.payload.animatorParams.Length > 0)
+        {
+            string err = ApplyAnimatorParams(request.payload.animatorParams, request.requestId);
+            if (err != null)
+                return IpcProtocol.CreateError(request.requestId, err);
+        }
+
+        var msg = new AvatarMessage
+        {
+            text = request.payload.text,
+            state = request.payload.state ?? "Idle",
+            locKey = "",
+            onActive = false,
+            isHusbando = false
+        };
+
+        target.ShowExternalMessage(msg, request.payload.forceShow);
+        return IpcProtocol.CreateSuccess(request.requestId);
+    }
+
+    private IpcResponse HandleSetAnimator(IpcRequest request)
+    {
+        string err = ApplyAnimatorParams(request.payload.animatorParams, request.requestId);
+        if (err != null)
+            return IpcProtocol.CreateError(request.requestId, err);
+
+        return IpcProtocol.CreateSuccess(request.requestId);
+    }
+
+    private string ApplyAnimatorParams(IpcAnimatorParam[] animatorParams, string requestId)
+    {
+        var animator = GetActiveAnimator();
+        if (animator == null)
+            return "Animator not found";
+
+        for (int i = 0; i < animatorParams.Length; i++)
+        {
+            var p = animatorParams[i];
+
+            if (!HasAnimatorParameter(animator, p.param))
+                return "Unknown animator parameter: " + p.param;
+
+            switch (p.valueType)
+            {
+                case "bool":
+                    animator.SetBool(p.param, p.boolValue);
+                    break;
+                case "float":
+                    animator.SetFloat(p.param, p.floatValue);
+                    break;
+                case "int":
+                    animator.SetInteger(p.param, p.intValue);
+                    break;
+                case "trigger":
+                    animator.SetTrigger(p.param);
+                    break;
+            }
+        }
+
+        return null;
+    }
+
+    private bool HasAnimatorParameter(Animator animator, string paramName)
+    {
+        var parameters = animator.parameters;
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            if (parameters[i].name == paramName)
+                return true;
+        }
+        return false;
     }
 
     private AvatarRandomMessages GetActiveAvatarMessages()
@@ -116,6 +183,25 @@ public class IpcController : MonoBehaviour
             avatarMessages = candidates[0];
 
         return avatarMessages;
+    }
+
+    private Animator GetActiveAnimator()
+    {
+        if (avatarAnimator != null && avatarAnimator.isActiveAndEnabled)
+            return avatarAnimator;
+
+        var candidates = FindObjectsByType<Animator>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            if (candidates[i] != null && candidates[i].isActiveAndEnabled &&
+                candidates[i].runtimeAnimatorController != null)
+            {
+                avatarAnimator = candidates[i];
+                return avatarAnimator;
+            }
+        }
+
+        return null;
     }
 
     void OnDestroy()

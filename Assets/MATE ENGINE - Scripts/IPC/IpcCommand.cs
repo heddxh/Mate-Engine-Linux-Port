@@ -12,9 +12,23 @@ public class IpcRequest
 [Serializable]
 public class IpcPayload
 {
+    // show_message fields
     public string text;
     public string state = "Idle";
     public bool forceShow;
+
+    // optional animator control (for show_message or standalone set_animator)
+    public IpcAnimatorParam[] animatorParams;
+}
+
+[Serializable]
+public class IpcAnimatorParam
+{
+    public string param;
+    public string valueType;
+    public bool boolValue;
+    public float floatValue;
+    public int intValue;
 }
 
 [Serializable]
