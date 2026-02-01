@@ -19,6 +19,8 @@ public class AvatarMessage
 
 public class AvatarRandomMessages : MonoBehaviour
 {
+    private class CoroutineRunner : MonoBehaviour { }
+
     [Header("Localization")]
     public string localizationTable = "Languages (UI)";
 
@@ -52,8 +54,13 @@ public class AvatarRandomMessages : MonoBehaviour
     private Bubble activeBubble;
     private Coroutine streamCoroutine;
     private Coroutine despawnCoroutine;
+    private MonoBehaviour streamCoroutineOwner;
+    private MonoBehaviour despawnCoroutineOwner;
     private Coroutine loopCoroutine;
     private bool isBubbleActive;
+    private bool isExternalMessage;
+
+    private static CoroutineRunner sharedRunner;
 
     private Animator avatarAnimator;
     private string lastAnimatorStateName = "";
@@ -151,10 +158,27 @@ public class AvatarRandomMessages : MonoBehaviour
         ShowSpecificMessage(idlePool[Random.Range(0, idlePool.Count)]);
     }
 
+    public void ShowExternalMessage(AvatarMessage msg, bool forceShow = false)
+    {
+        if (chatContainer == null || msg == null) return;
+        if (!forceShow && !enableRandomMessages) return;
+        if (!forceShow && IsBlockedByObjects()) return;
+        if (!forceShow && useAllowedStatesWhitelist && !IsInAllowedState()) return;
+
+        isExternalMessage = true;
+        ShowMessageInternal(msg);
+    }
+
     void ShowSpecificMessage(AvatarMessage msg)
     {
         if (!enableRandomMessages) return;
         if (chatContainer == null || msg == null) return;
+        isExternalMessage = false;
+        ShowMessageInternal(msg);
+    }
+
+    private void ShowMessageInternal(AvatarMessage msg)
+    {
         RemoveBubble();
 
         var ui = new BubbleUI
@@ -178,13 +202,15 @@ public class AvatarRandomMessages : MonoBehaviour
         isBubbleActive = true;
 
         if (streamAudioSource != null) { streamAudioSource.Stop(); streamAudioSource.Play(); }
-        if (streamCoroutine != null) StopCoroutine(streamCoroutine);
+        if (streamCoroutine != null && streamCoroutineOwner != null) streamCoroutineOwner.StopCoroutine(streamCoroutine);
 
         if (avatarAnimator != null) avatarAnimator.SetBool("isTalking", true);
 
-        streamCoroutine = StartCoroutine(FakeStreamText(finalText));
-        if (despawnCoroutine != null) StopCoroutine(despawnCoroutine);
-        despawnCoroutine = StartCoroutine(DespawnAfterDelay());
+        streamCoroutineOwner = GetCoroutineOwner();
+        streamCoroutine = streamCoroutineOwner.StartCoroutine(FakeStreamText(finalText));
+        if (despawnCoroutine != null && despawnCoroutineOwner != null) despawnCoroutineOwner.StopCoroutine(despawnCoroutine);
+        despawnCoroutineOwner = GetCoroutineOwner();
+        despawnCoroutine = despawnCoroutineOwner.StartCoroutine(DespawnAfterDelay());
     }
 
     string ResolveText(AvatarMessage msg)
@@ -205,15 +231,23 @@ public class AvatarRandomMessages : MonoBehaviour
     IEnumerator FakeStreamText(string fullText)
     {
         if (activeBubble == null) yield break;
+        if (string.IsNullOrEmpty(fullText))
+        {
+            activeBubble.SetText(fullText ?? "");
+            if (streamAudioSource != null && streamAudioSource.isPlaying) streamAudioSource.Stop();
+            if (avatarAnimator != null) avatarAnimator.SetBool("isTalking", false);
+            streamCoroutine = null;
+            yield break;
+        }
         activeBubble.SetText("");
         int length = 0;
         float delay = 1f / Mathf.Max(streamSpeed, 1);
         while (length < fullText.Length)
         {
-            if (!enableRandomMessages) yield break;
+            if (!isExternalMessage && !enableRandomMessages) yield break;
             length++;
             activeBubble.SetText(fullText.Substring(0, length));
-            yield return new WaitForSeconds(delay);
+            yield return new WaitForSecondsRealtime(delay);
             if (activeBubble == null) yield break;
         }
         activeBubble.SetText(fullText);
@@ -229,8 +263,8 @@ public class AvatarRandomMessages : MonoBehaviour
         float t = 0f;
         while (t < despawnTime)
         {
-            if (!enableRandomMessages) yield break;
-            t += Time.deltaTime;
+            if (!isExternalMessage && !enableRandomMessages) yield break;
+            t += Time.unscaledDeltaTime;
             yield return null;
         }
         RemoveBubble();
@@ -238,8 +272,12 @@ public class AvatarRandomMessages : MonoBehaviour
 
     void RemoveBubble()
     {
-        if (streamCoroutine != null) { StopCoroutine(streamCoroutine); streamCoroutine = null; }
-        if (despawnCoroutine != null) { StopCoroutine(despawnCoroutine); despawnCoroutine = null; }
+        if (streamCoroutine != null && streamCoroutineOwner != null) { streamCoroutineOwner.StopCoroutine(streamCoroutine); }
+        if (despawnCoroutine != null && despawnCoroutineOwner != null) { despawnCoroutineOwner.StopCoroutine(despawnCoroutine); }
+        streamCoroutine = null;
+        streamCoroutineOwner = null;
+        despawnCoroutine = null;
+        despawnCoroutineOwner = null;
         if (activeBubble != null) { activeBubble.Destroy(); activeBubble = null; }
         if (streamAudioSource != null && streamAudioSource.isPlaying) streamAudioSource.Stop();
         isBubbleActive = false;
@@ -284,5 +322,20 @@ public class AvatarRandomMessages : MonoBehaviour
         var clips = avatarAnimator.GetCurrentAnimatorClipInfo(0);
         if (clips.Length > 0 && clips[0].clip != null) return clips[0].clip.name;
         return stateInfo.IsName("") ? "" : stateInfo.shortNameHash.ToString();
+    }
+
+    private MonoBehaviour GetCoroutineOwner()
+    {
+        if (isActiveAndEnabled)
+            return this;
+
+        if (sharedRunner == null)
+        {
+            var go = new GameObject("AvatarRandomMessagesRunner");
+            DontDestroyOnLoad(go);
+            sharedRunner = go.AddComponent<CoroutineRunner>();
+        }
+
+        return sharedRunner;
     }
 }
